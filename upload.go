@@ -94,6 +94,19 @@ func (cli *Client) Upload(ctx context.Context, plaintext []byte, appInfo MediaTy
 	return
 }
 
+// WZAPI-PATCH(4): Exposes the MediaConn (auth token + upload hosts) for the
+// client's session. Required by wuzapi's Lambda upload offload pipeline: the
+// pod obtains the MediaConn via this method and passes it to AWS Lambda, which
+// then uploads media directly to WhatsApp servers without the plaintext data
+// passing through the pod. Base: 4e62216.
+//
+// GetMediaConn returns the current media connection parameters (auth token, hosts)
+// for the client's session. Used by external upload services (e.g., Lambda offload)
+// to upload media to WhatsApp servers without the plaintext data passing through the pod.
+func (cli *Client) GetMediaConn(ctx context.Context) (*MediaConn, error) {
+	return cli.refreshMediaConn(ctx, false)
+}
+
 // UploadReader uploads the given attachment to WhatsApp servers.
 //
 // This is otherwise identical to [Upload], but it reads the plaintext from an [io.Reader] instead of a byte slice.

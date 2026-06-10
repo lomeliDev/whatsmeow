@@ -971,7 +971,12 @@ func getMediaTypeFromMessage(msg *waE2E.Message) string {
 	case msg.ContactsArrayMessage != nil:
 		return "contact_array"
 	case msg.ListMessage != nil:
-		return "list"
+		// WZAPI-PATCH(1): ListMessage returns "" instead of "list" to prevent
+		// whatsmeow from auto-injecting a <biz> node with list-specific attributes
+		// (v="2", type="..."). wuzapi injects the <biz> node manually via
+		// SendRequestExtra.AdditionalNodes. A double-injected node causes WhatsApp
+		// to reject the message or flag the account for ban. Base: 4e62216.
+		return ""
 	case msg.ListResponseMessage != nil:
 		return "list_response"
 	case msg.ButtonsResponseMessage != nil:
@@ -1000,7 +1005,11 @@ func getButtonTypeFromMessage(msg *waE2E.Message) string {
 	case msg.ButtonsResponseMessage != nil:
 		return "buttons_response"
 	case msg.ListMessage != nil:
-		return "list"
+		// WZAPI-PATCH(2): Same as patch #1 — ListMessage returns "" instead of
+		// "list" to prevent double-injection of the <biz> node. wuzapi handles
+		// biz node injection manually. Double injection risks message rejection
+		// or account ban. Base: 4e62216.
+		return ""
 	case msg.ListResponseMessage != nil:
 		return "list_response"
 	case msg.InteractiveResponseMessage != nil:
@@ -1021,9 +1030,14 @@ func getButtonAttributes(msg *waE2E.Message) waBinary.Attrs {
 	case msg.TemplateMessage != nil:
 		return waBinary.Attrs{}
 	case msg.ListMessage != nil:
+		// WZAPI-PATCH(3): "v":"2" and "type" attributes are commented out for
+		// ListMessage to prevent double-injection. wuzapi sets these attributes
+		// via SendRequestExtra.AdditionalNodes. If whatsmeow also emits them,
+		// WhatsApp gets duplicate attrs and may reject the message or flag the
+		// account. Base: 4e62216.
 		return waBinary.Attrs{
-			"v":    "2",
-			"type": strings.ToLower(waE2E.ListMessage_ListType_name[int32(msg.ListMessage.GetListType())]),
+			// "v":    "2",
+			// "type": strings.ToLower(waE2E.ListMessage_ListType_name[int32(msg.ListMessage.GetListType())]),
 		}
 	default:
 		return waBinary.Attrs{}
