@@ -63,10 +63,29 @@ type qrChannel struct {
 	closed    atomic.Bool
 	output    chan<- QRChannelItem
 	stopQRs   chan struct{}
+
+	// WZAPI-PATCH(6): stopQRs used to be closed from exactly one place, so a
+	// bare close() was safe. The passkey branch below closes it too, and a
+	// second close panics, so both paths now go through stopEmittingQRs.
+	stopQRsOnce sync.Once
 }
 
 func (qrc *qrChannel) close() bool {
 	return qrc.closed.Swap(true) == false
+}
+
+// stopEmittingQRs halts the QR rotation goroutine without closing the output
+// channel and without disconnecting the client. It is idempotent.
+//
+// WZAPI-PATCH(6): added for the passkey flow. emitQRs treats <-stopQRs as a
+// plain return, unlike every other exit path in it, which closes the channel,
+// removes the event handler and calls Disconnect. That distinction is what
+// makes this the right lever: pausing the rotation is not the same as ending
+// the pairing.
+func (qrc *qrChannel) stopEmittingQRs() {
+	qrc.stopQRsOnce.Do(func() {
+		close(qrc.stopQRs)
+	})
 }
 
 func (qrc *qrChannel) emitQRs(codes []string) {
@@ -139,6 +158,21 @@ func (qrc *qrChannel) handleEvent(rawEvt any) {
 		qrc.output <- QRChannelScannedWithoutMultidevice
 		return
 	case *events.PairPasskeyRequest:
+		// WZAPI-PATCH(6): stop rotating QR codes for the rest of the pairing.
+		//
+		// A passkey request only arrives once the QR has already been scanned,
+		// so the remaining codes are dead weight — but they are not harmless.
+		// emitQRs keeps counting down and, when it runs out (60s + 20s x 5 by
+		// default), closes the output channel and calls cli.Disconnect(). The
+		// WebAuthn ceremony needs a human to go to a WhatsApp-origin tab and
+		// authenticate, which routinely takes longer than that, so without this
+		// the socket dies mid-ceremony and the pairing fails with no diagnostic.
+		//
+		// The same goroutine is also the only thing watching qrc.ctx, so
+		// stopping it here additionally means the caller's context deadline no
+		// longer tears the channel down. Callers must therefore impose their
+		// own ceremony timeout; see the note on GetQRChannel.
+		qrc.stopEmittingQRs()
 		qrc.output <- QRChannelItem{
 			Event:          QRChannelEventPasskeyRequest,
 			PasskeyRequest: evt,
@@ -183,7 +217,9 @@ func (qrc *qrChannel) handleEvent(rawEvt any) {
 	default:
 		return
 	}
-	close(qrc.stopQRs)
+	// WZAPI-PATCH(6): was close(qrc.stopQRs). The passkey branch may already
+	// have closed it, and closing a closed channel panics.
+	qrc.stopEmittingQRs()
 	if qrc.close() {
 		qrc.log.Debugf("Closing channel with status %+v", outputType)
 		qrc.output <- outputType
@@ -201,6 +237,14 @@ func (qrc *qrChannel) handleEvent(rawEvt any) {
 //
 // The last value to be emitted will be a special event like "success", "timeout" or another error code
 // depending on the result of the pairing. The channel will be closed immediately after one of those.
+//
+// WZAPI-PATCH(6): the ctx passed here must outlive the whole pairing, including
+// a possible WebAuthn ceremony. Two reasons. First, once a passkey-request is
+// emitted the QR emitter stops, and it was the only goroutine watching this
+// ctx, so its deadline stops being enforced — the caller owns the timeout from
+// that point on. Second, this same ctx is what the automatic
+// SendPasskeyConfirmation below is issued with, so a short deadline makes the
+// auto-confirmation fail exactly when it is needed.
 func (cli *Client) GetQRChannel(ctx context.Context) (<-chan QRChannelItem, error) {
 	if cli == nil {
 		return nil, ErrClientIsNil
