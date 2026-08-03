@@ -217,8 +217,9 @@ func (qrc *qrChannel) handleEvent(rawEvt any) {
 	default:
 		return
 	}
-	// WZAPI-PATCH(6): was close(qrc.stopQRs). The passkey branch may already
-	// have closed it, and closing a closed channel panics.
+	// WZAPI-PATCH(6): this used to close the stopQRs channel directly. The
+	// passkey branch may already have closed it, and closing a closed channel
+	// panics, so both paths go through the sync.Once now.
 	qrc.stopEmittingQRs()
 	if qrc.close() {
 		qrc.log.Debugf("Closing channel with status %+v", outputType)
