@@ -88,6 +88,21 @@ func (qrc *qrChannel) stopEmittingQRs() {
 	})
 }
 
+// stopQRRotation halts the QR emitter of the channel currently attached to this
+// client, if there is one. Safe to call when there is none.
+//
+// WZAPI-PATCH(7): the hook exists so PairPhone can reach the emitter. Pairing by
+// phone code and pairing by QR are the same session started two ways, so the QR
+// emitter keeps counting down under a code pairing even though nobody will ever
+// scan those codes — and when it runs out it disconnects the client. Measured on
+// a real gateway: a code pairing died after exactly 161 seconds, which is the
+// six codes (60s + 20s x 5), not any deliberate limit on entering a code.
+func (cli *Client) stopQRRotation() {
+	if fn := cli.stopQRRotationFn.Load(); fn != nil {
+		(*fn)()
+	}
+}
+
 func (qrc *qrChannel) emitQRs(codes []string) {
 	var nextCode string
 	for {
@@ -263,5 +278,10 @@ func (cli *Client) GetQRChannel(ctx context.Context) (<-chan QRChannelItem, erro
 		ctx:     ctx,
 	}
 	qrc.handlerID = cli.AddEventHandler(qrc.handleEvent)
+	// WZAPI-PATCH(7): published so PairPhone can stop the emitter. Set after
+	// the handler is registered so the channel is fully built before anything
+	// else can reach it.
+	stop := qrc.stopEmittingQRs
+	cli.stopQRRotationFn.Store(&stop)
 	return ch, nil
 }

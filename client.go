@@ -192,6 +192,10 @@ type Client struct {
 	passkeyHandoffKey    atomic.Pointer[passkeyHandoffKey]
 	passkeySkipHandoffUX atomic.Bool
 
+	// WZAPI-PATCH(7): set by GetQRChannel so PairPhone can stop the QR emitter.
+	// See stopQRRotation.
+	stopQRRotationFn atomic.Pointer[func()]
+
 	uniqueID  string
 	idCounter atomic.Uint64
 

@@ -139,6 +139,13 @@ func (cli *Client) PairPhone(ctx context.Context, phone string, showPushNotifica
 		linkingCode: encodedLinkingCode,
 		pairingRef:  string(pairingRef),
 	})
+	// WZAPI-PATCH(7): the user is going to type this code, not scan a QR, so the
+	// remaining QR codes are dead weight — and not harmless: when the emitter
+	// runs out it disconnects the client, capping a code pairing at whatever the
+	// QR lifetime happens to be (161s measured). Stopping it hands the timeout
+	// back to the caller, who is the only one who knows how long a human needs
+	// to receive a code and type it.
+	cli.stopQRRotation()
 	return encodedLinkingCode[0:4] + "-" + encodedLinkingCode[4:], nil
 }
 
