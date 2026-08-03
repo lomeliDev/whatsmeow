@@ -24,9 +24,24 @@ import (
 
 const (
 	// WantedPreKeyCount is the number of prekeys that the client should upload to the WhatsApp servers in a single batch.
-	WantedPreKeyCount = 50
+	//
+	// WZAPI-PATCH(5): raised from 50 to 812, the refill batch every official
+	// WhatsApp client uses. Measured across all five platforms in "Prekey Pogo"
+	// (arXiv 2504.07323, §4.3): "all implementations use a fixed refill batch of
+	// 812 elements". Upstream already uploads 812 on the initial upload (see
+	// uploadPreKeys below), so this only makes the refill match the first upload.
+	// A 50-key refill leaves the server pool cycling between ~0 and ~55, which is
+	// both a fingerprint no real client produces and a permanently thin reserve:
+	// when it empties, new contacts can no longer open a Signal session with us.
+	WantedPreKeyCount = 812
 	// MinPreKeyCount is the number of prekeys when the client will upload a new batch of prekeys to the WhatsApp servers.
-	MinPreKeyCount = 5
+	//
+	// WZAPI-PATCH(5): raised from 5 to 10. The server pushes an
+	// <notification type="encrypt"><count value="N"/> as soon as fewer than 11
+	// one-time prekeys are left (same paper, §4.1) and official clients refill on
+	// that signal. handleEncryptNotification gates on this constant, so at 5 the
+	// client received the warning and ignored it for the whole 5..10 range.
+	MinPreKeyCount = 10
 )
 
 func (cli *Client) getServerPreKeyCount(ctx context.Context) (int, error) {
