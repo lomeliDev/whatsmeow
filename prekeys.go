@@ -36,12 +36,15 @@ const (
 	WantedPreKeyCount = 812
 	// MinPreKeyCount is the number of prekeys when the client will upload a new batch of prekeys to the WhatsApp servers.
 	//
-	// WZAPI-PATCH(5): raised from 5 to 10. The server pushes an
+	// WZAPI-PATCH(5): raised from 5 to 11. The server pushes an
 	// <notification type="encrypt"><count value="N"/> as soon as fewer than 11
-	// one-time prekeys are left (same paper, §4.1) and official clients refill on
-	// that signal. handleEncryptNotification gates on this constant, so at 5 the
-	// client received the warning and ignored it for the whole 5..10 range.
-	MinPreKeyCount = 10
+	// one-time prekeys are left, and official clients refill "as soon as it has
+	// only 10 remaining prekeys left" (same paper, §4.1 and §4.3). Both call
+	// sites compare with a strict <, so 11 is the value that fires at exactly
+	// 10; a literal 10 here would fire at 9 and let the first server
+	// notification pass unanswered — and handleEncryptNotification is the only
+	// refill path that runs mid-session, so a missed one waits for a reconnect.
+	MinPreKeyCount = 11
 )
 
 func (cli *Client) getServerPreKeyCount(ctx context.Context) (int, error) {
