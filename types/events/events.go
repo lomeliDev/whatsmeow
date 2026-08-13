@@ -133,6 +133,9 @@ type LoggedOut struct {
 	OnConnect bool
 	// If OnConnect is true, then this field contains the reason code.
 	Reason ConnectFailureReason
+	// OnReachoutTimelock is true when this LoggedOut was caused by a temporary
+	// reachout timelock (463) and the store was NOT deleted. WZAPI-PATCH(8).
+	OnReachoutTimelock bool
 }
 
 // StreamReplaced is emitted when the client is disconnected by another client connecting with the same keys.
