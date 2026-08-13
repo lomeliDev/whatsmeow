@@ -432,6 +432,9 @@ func (cli *Client) handleMexNotification(ctx context.Context, node *waBinary.Nod
 			cli.dispatchEvent(wrapper.Data.MuteChange)
 		} else if wrapper.Data.NotifyAccountReachoutTimelock != nil {
 			wrapper.Data.NotifyAccountReachoutTimelock.Mex = mnd
+			// WZAPI-PATCH(8): registrar el instante para que recentReachoutTimelock
+			// pueda distinguir un 401 device_removed temporal de un logout real.
+			cli.lastReachoutTimelockAt.Store(time.Now().UnixMilli())
 			cli.dispatchEvent(wrapper.Data.NotifyAccountReachoutTimelock)
 		}
 	}

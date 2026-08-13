@@ -195,6 +195,17 @@ type Client struct {
 	// See stopQRRotation.
 	stopQRRotationFn atomic.Pointer[func()]
 
+	// WZAPI-PATCH(8): instante (UnixMilli) del último NotifyAccountReachoutTimelock,
+	// para distinguir un 401 device_removed temporal (reachout timelock / 463) de un
+	// logout real. Lo registra el handler del notification mex; lo lee
+	// recentReachoutTimelock desde handleStreamError y handleConnectFailure.
+	lastReachoutTimelockAt atomic.Int64
+	// WZAPI-PATCH(8): ReachoutTimelock401GraceMs es la ventana (ms) tras un timelock
+	// en la que un 401 device_removed se trata como temporal (no borra el store).
+	// 0 desactiva (borra siempre, como upstream). Lo setea el gateway al construir
+	// el cliente.
+	ReachoutTimelock401GraceMs int64
+
 	uniqueID  string
 	idCounter atomic.Uint64
 
@@ -211,6 +222,20 @@ type Client struct {
 	// The library is currently embedded in mautrix-meta (https://github.com/mautrix/meta), but may be separated later.
 	MessengerConfig *MessengerConfig
 	RefreshCAT      func(context.Context) error
+}
+
+// recentReachoutTimelock reports whether a NotifyAccountReachoutTimelock arrived
+// within ReachoutTimelock401GraceMs. Used to tell a temporary 401 device_removed
+// (reachout timelock / 463) apart from a real logout. WZAPI-PATCH(8).
+func (cli *Client) recentReachoutTimelock() bool {
+	if cli.ReachoutTimelock401GraceMs <= 0 {
+		return false
+	}
+	last := cli.lastReachoutTimelockAt.Load()
+	if last == 0 {
+		return false
+	}
+	return time.Now().UnixMilli()-last < cli.ReachoutTimelock401GraceMs
 }
 
 type groupMetaCache struct {

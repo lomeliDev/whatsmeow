@@ -39,6 +39,14 @@ func (cli *Client) handleStreamError(ctx context.Context, node *waBinary.Node) {
 		}()
 	case code == "401" && conflictType == "device_removed":
 		cli.expectDisconnect()
+		// WZAPI-PATCH(8): un 401 device_removed pegado a un reachout timelock (463)
+		// reciente es temporal — NO se borra el store; el gateway deja la sesión en
+		// timelocked y reconecta al expirar. El flag OnReachoutTimelock se lo dice.
+		if cli.recentReachoutTimelock() {
+			cli.Log.Warnf("401 device_removed pegado a un reachout timelock — temporal, NO se borra el store")
+			go cli.dispatchEvent(&events.LoggedOut{OnConnect: false, Reason: events.ConnectFailureLoggedOut, OnReachoutTimelock: true})
+			return
+		}
 		cli.Log.Infof("Got device removed stream error, sending LoggedOut event and deleting session")
 		go cli.dispatchEvent(&events.LoggedOut{OnConnect: false, Reason: events.ConnectFailureLoggedOut})
 		err := cli.Store.Delete(ctx)
@@ -124,6 +132,14 @@ func (cli *Client) handleConnectFailure(ctx context.Context, node *waBinary.Node
 		)
 	}
 	if reason.IsLoggedOut() {
+		// WZAPI-PATCH(8): mismo trato que el 401 device_removed — si hay un reachout
+		// timelock (463) reciente, es temporal: NO se borra el store y el evento
+		// lleva OnReachoutTimelock para que el gateway lo distinga de un logout real.
+		if cli.recentReachoutTimelock() {
+			cli.Log.Warnf("connect failure logged-out pegado a un reachout timelock — temporal, NO se borra el store")
+			go cli.dispatchEvent(&events.LoggedOut{OnConnect: true, Reason: reason, OnReachoutTimelock: true})
+			return
+		}
 		cli.Log.Infof("Got %s connect failure, sending LoggedOut event and deleting session", reason)
 		go cli.dispatchEvent(&events.LoggedOut{OnConnect: true, Reason: reason})
 		err := cli.Store.Delete(ctx)
