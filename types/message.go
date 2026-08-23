@@ -34,6 +34,14 @@ type MessageSource struct {
 	SenderAlt      JID            // The alternative address of the user who sent the message
 	RecipientAlt   JID            // The alternative address of the recipient of the message for DMs.
 
+	// wzapi patch 9: the @username the server already puts on every message
+	// stanza. SenderUsername comes from participant_username in a group and from
+	// peer_recipient_username/recipient_username on an incoming DM (the peer is
+	// the sender). RecipientUsername is the DM peer's username on an outgoing
+	// (IsFromMe) echo. Both are empty for accounts that have no username set.
+	SenderUsername    string
+	RecipientUsername string
+
 	// When sending a read receipt to a broadcast list message, the Chat is the broadcast list
 	// and Sender is you, so this field contains the recipient of the read receipt.
 	BroadcastListOwner  JID
