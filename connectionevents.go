@@ -124,12 +124,16 @@ func (cli *Client) handleConnectFailure(ctx context.Context, node *waBinary.Node
 		cli.socketLock.RLock()
 		defer cli.socketLock.RUnlock()
 	}
-	if reason == 403 {
-		cli.Log.Debugf(
-			"Message for 403 connect failure: %s / %s",
-			ag.OptionalString("logout_message_header"),
-			ag.OptionalString("logout_message_subtext"),
-		)
+	// WZAPI-PATCH(12): estos dos atributos son WhatsApp explicando POR QUÉ tumbó
+	// la cuenta. Iban a Debugf, que con el logger por defecto (nulo) es tirarlos:
+	// el día que se pierde una cuenta, la explicación pasó por este proceso y no
+	// quedó en ningún sitio. Ahora salen a Warn y viajan dentro del LoggedOut.
+	// Se leen para cualquier reason, no sólo el 403: el server los manda con el
+	// 403, pero nada garantiza que sea el único código que los traiga.
+	logoutHeader := ag.OptionalString("logout_message_header")
+	logoutSubtext := ag.OptionalString("logout_message_subtext")
+	if logoutHeader != "" || logoutSubtext != "" {
+		cli.Log.Warnf("WhatsApp explanation for %d connect failure: %s / %s", int(reason), logoutHeader, logoutSubtext)
 	}
 	if reason.IsLoggedOut() {
 		// WZAPI-PATCH(8): mismo trato que el 401 device_removed — si hay un reachout
@@ -137,11 +141,17 @@ func (cli *Client) handleConnectFailure(ctx context.Context, node *waBinary.Node
 		// lleva OnReachoutTimelock para que el gateway lo distinga de un logout real.
 		if cli.recentReachoutTimelock() {
 			cli.Log.Warnf("connect failure logged-out pegado a un reachout timelock — temporal, NO se borra el store")
-			go cli.dispatchEvent(&events.LoggedOut{OnConnect: true, Reason: reason, OnReachoutTimelock: true})
+			go cli.dispatchEvent(&events.LoggedOut{
+				OnConnect: true, Reason: reason, OnReachoutTimelock: true,
+				LogoutMessageHeader: logoutHeader, LogoutMessageSubtext: logoutSubtext,
+			})
 			return
 		}
 		cli.Log.Infof("Got %s connect failure, sending LoggedOut event and deleting session", reason)
-		go cli.dispatchEvent(&events.LoggedOut{OnConnect: true, Reason: reason})
+		go cli.dispatchEvent(&events.LoggedOut{
+			OnConnect: true, Reason: reason,
+			LogoutMessageHeader: logoutHeader, LogoutMessageSubtext: logoutSubtext,
+		})
 		err := cli.Store.Delete(ctx)
 		if err != nil {
 			cli.Log.Warnf("Failed to delete store after %d failure: %v", int(reason), err)
