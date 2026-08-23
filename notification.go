@@ -436,6 +436,15 @@ func (cli *Client) handleMexNotification(ctx context.Context, node *waBinary.Nod
 			// pueda distinguir un 401 device_removed temporal de un logout real.
 			cli.lastReachoutTimelockAt.Store(time.Now().UnixMilli())
 			cli.dispatchEvent(wrapper.Data.NotifyAccountReachoutTimelock)
+		} else {
+			// WZAPI-PATCH(11): un op_name que no se modela NO se tira en
+			// silencio. Este es el canal por el que llegó el aviso del reachout
+			// timelock (463); si WhatsApp introduce otro aviso de cuenta, sin
+			// esta rama el proceso lo recibiría y no quedaría ni una línea que
+			// mirar después. El evento va crudo: no hace falta entenderlo para
+			// conservarlo.
+			cli.Log.Warnf("Unhandled mex notification op_name %q, dispatching raw", mnd.OpName)
+			cli.dispatchEvent(&events.UnknownMexNotification{Mex: mnd, Raw: append(json.RawMessage(nil), childData...)})
 		}
 	}
 }

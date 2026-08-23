@@ -8,6 +8,7 @@
 package events
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"time"
@@ -136,6 +137,13 @@ type LoggedOut struct {
 	// OnReachoutTimelock is true when this LoggedOut was caused by a temporary
 	// reachout timelock (463) and the store was NOT deleted. WZAPI-PATCH(8).
 	OnReachoutTimelock bool
+	// LogoutMessageHeader and LogoutMessageSubtext carry WhatsApp's own
+	// explanation of why it took the account down, as sent on the <failure>
+	// node. WZAPI-PATCH(12): they used to go to Debugf and nothing else, so with
+	// the default nil logger the only account-loss explanation that ever reaches
+	// the process was thrown away. Empty when the server did not send them.
+	LogoutMessageHeader  string
+	LogoutMessageSubtext string
 }
 
 // StreamReplaced is emitted when the client is disconnected by another client connecting with the same keys.
@@ -635,6 +643,24 @@ type BlocklistChange struct {
 type MexNotificationData struct {
 	Timestamp time.Time
 	OpName    string
+}
+
+// UnknownMexNotification is emitted for a mex notification whose op_name has no
+// typed event in this library. WZAPI-PATCH(11).
+//
+// Before this patch, handleMexNotification recognised four op_names and dropped
+// everything else inside its loop: no log, no event, no metric. That is the very
+// channel WhatsApp used to announce the reachout timelock (463) enforcement, so a
+// new xwa2_notify_account_* warning — a messaging limit, a quality drop, a notice
+// ahead of a ban — would arrive and leave no trace at all, not even one to read
+// afterwards. Losing a WhatsApp account is not reversible; the warning that
+// precedes it must at minimum be recoverable.
+//
+// Raw is the update node's JSON payload verbatim (the {"data":{...}} envelope),
+// so the consumer can read a notification this library does not model yet.
+type UnknownMexNotification struct {
+	Mex MexNotificationData
+	Raw json.RawMessage
 }
 
 type NewsletterJoin struct {
