@@ -209,9 +209,16 @@ func (s *CachedLIDMap) PutLIDMapping(ctx context.Context, lid, pn types.JID) err
 	})
 }
 
+// wzapi patch 10: PutManyLIDMappings does NOT hold lidCacheLock across the DB
+// insert. A history-sync batch is 6000+ entries, each a DELETE + INSERT round
+// trip; holding the lock across all of them stalls StoreLIDPNMapping (PutLIDMapping)
+// on the incoming-message path for the whole insert (whatsmeow #1004 / #1196),
+// which parks inbound messages until the sync finishes. Instead: filter under a
+// brief lock, do the DB write with NO lock held, then take the lock only to
+// refresh the in-memory maps (O(len), no DB). The cache maps are just a cache,
+// so a concurrent single Put racing this batch self-heals on the next lookup miss.
 func (s *CachedLIDMap) PutManyLIDMappings(ctx context.Context, mappings []store.LIDMapping) error {
 	s.lidCacheLock.Lock()
-	defer s.lidCacheLock.Unlock()
 	mappings = slices.DeleteFunc(mappings, func(mapping store.LIDMapping) bool {
 		if mapping.LID.Server != types.HiddenUserServer || mapping.PN.Server != types.DefaultUserServer {
 			zerolog.Ctx(ctx).Debug().
@@ -227,18 +234,30 @@ func (s *CachedLIDMap) PutManyLIDMappings(ctx context.Context, mappings []store.
 		return false
 	})
 	mappings = exslices.DeduplicateUnsortedOverwrite(mappings)
+	s.lidCacheLock.Unlock()
 	if len(mappings) == 0 {
 		return nil
 	}
-	return s.db.DoTxn(ctx, nil, func(ctx context.Context) error {
+	err := s.db.DoTxn(ctx, nil, func(ctx context.Context) error {
 		for _, mapping := range mappings {
-			err := s.unlockedPutLIDMapping(ctx, mapping.LID, mapping.PN)
-			if err != nil {
+			if _, err := s.db.Exec(ctx, deleteExistingLIDMappingQuery, mapping.LID.User, mapping.PN.User); err != nil {
+				return err
+			}
+			if _, err := s.db.Exec(ctx, putLIDMappingQuery, mapping.LID.User, mapping.PN.User); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	s.lidCacheLock.Lock()
+	for _, mapping := range mappings {
+		s.putLIDMappingCacheLocked(mapping.LID, mapping.PN)
+	}
+	s.lidCacheLock.Unlock()
+	return nil
 }
 
 func (s *CachedLIDMap) unlockedPutLIDMapping(ctx context.Context, lid, pn types.JID) error {
@@ -253,6 +272,15 @@ func (s *CachedLIDMap) unlockedPutLIDMapping(ctx context.Context, lid, pn types.
 	if err != nil {
 		return err
 	}
+	s.putLIDMappingCacheLocked(lid, pn)
+	return nil
+}
+
+// putLIDMappingCacheLocked refreshes the in-memory pn<->lid maps for one entry.
+// The caller must hold lidCacheLock. wzapi patch 10 extracted this from
+// unlockedPutLIDMapping so PutManyLIDMappings can update the cache after its DB
+// write instead of during it.
+func (s *CachedLIDMap) putLIDMappingCacheLocked(lid, pn types.JID) {
 	oldLID := s.pnToLIDCache[pn.User]
 	oldPN := s.lidToPNCache[lid.User]
 	s.pnToLIDCache[pn.User] = lid.User
@@ -263,5 +291,4 @@ func (s *CachedLIDMap) unlockedPutLIDMapping(ctx context.Context, lid, pn types.
 	if oldLID != "" && oldLID != lid.User && s.lidToPNCache[oldLID] == pn.User {
 		delete(s.lidToPNCache, oldLID)
 	}
-	return nil
 }
