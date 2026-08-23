@@ -107,6 +107,7 @@ func (cli *Client) parseMessageSource(node *waBinary.Node, requireParticipant bo
 		} else {
 			source.SenderAlt = ag.OptionalJIDOrEmpty("participant_lid")
 		}
+		source.SenderUsername = ag.OptionalString("participant_username") // wzapi patch 9
 		if source.Sender.User == clientID.User || source.Sender.User == clientLID.User {
 			source.IsFromMe = true
 		}
@@ -159,6 +160,7 @@ func (cli *Client) parseMessageSource(node *waBinary.Node, requireParticipant bo
 		} else {
 			source.RecipientAlt = ag.OptionalJIDOrEmpty("peer_recipient_lid")
 		}
+		source.RecipientUsername = firstNonEmptyAttr(ag, "peer_recipient_username", "recipient_username") // wzapi patch 9
 	} else if from.IsBot() {
 		source.Sender = from
 		meta := node.GetChildByTag("meta")
@@ -182,12 +184,27 @@ func (cli *Client) parseMessageSource(node *waBinary.Node, requireParticipant bo
 		} else {
 			source.SenderAlt = ag.OptionalJIDOrEmpty("sender_lid")
 		}
+		// wzapi patch 9: on an incoming DM the peer is the sender, so the
+		// server's peer/recipient username attribute is the sender's @username.
+		source.SenderUsername = firstNonEmptyAttr(ag, "peer_recipient_username", "recipient_username")
 	}
 	if !source.SenderAlt.IsEmpty() && source.SenderAlt.Device == 0 {
 		source.SenderAlt.Device = source.Sender.Device
 	}
 	err = ag.Error()
 	return
+}
+
+// firstNonEmptyAttr returns the first of the named optional string attributes
+// that is present and non-empty. wzapi patch 9 uses it to read the peer/recipient
+// @username, which the server sends under either name.
+func firstNonEmptyAttr(ag *waBinary.AttrUtility, names ...string) string {
+	for _, name := range names {
+		if v := ag.OptionalString(name); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func (cli *Client) parseMsgBotInfo(node waBinary.Node) (botInfo types.MsgBotInfo, err error) {
