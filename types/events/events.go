@@ -314,7 +314,41 @@ type UndecryptableMessage struct {
 	UnavailableType UnavailableType
 
 	DecryptFailMode DecryptFailMode
+
+	// WZAPI-PATCH(13): por qué falló el descifrado, para que el consumidor pueda
+	// distinguir lo que es recuperable de lo que no. Sin esto los tres desenlaces
+	// —almacén caído, contador viejo y fallo criptográfico— llegaban con la misma
+	// forma, y los dos primeros además morían en silencio.
+	FailReason DecryptFailReason
+	// StoreUnavailable es true cuando el descifrado no llegó a fallar por
+	// criptografía: el ALMACÉN no contestó (la base de datos detrás de
+	// Store.EventBuffer / Store.Sessions). El ratchet no se movió, el mensaje
+	// NO se confirmó a WhatsApp y no se gastó ningún retry receipt, así que el
+	// servidor puede volver a entregarlo cuando el almacén vuelva. Sólo lo marca
+	// el cliente que instaló Client.DecryptStoreUnavailable.
+	StoreUnavailable bool
 }
+
+// DecryptFailReason dice por qué no se pudo descifrar un mensaje entrante.
+//
+// WZAPI-PATCH(13).
+type DecryptFailReason string
+
+const (
+	// DecryptFailUnknown es el desenlace de siempre: falló y no se clasificó.
+	DecryptFailUnknown DecryptFailReason = ""
+	// DecryptFailStoreUnavailable es el almacén sin contestar. Recuperable: el
+	// mensaje no se confirmó y el servidor lo reentregará.
+	DecryptFailStoreUnavailable DecryptFailReason = "store_unavailable"
+	// DecryptFailOldCounter es signalerror.ErrOldCounter — la clave de ese
+	// contador ya se consumió o cayó fuera de la ventana de claves saltadas. El
+	// mensaje SÍ se confirma (reenviarlo sólo repetiría el mismo veredicto), así
+	// que este evento es la única señal de que existió.
+	DecryptFailOldCounter DecryptFailReason = "old_counter"
+	// DecryptFailCrypto es el fallo criptográfico de siempre, el que sí merece
+	// retry receipts.
+	DecryptFailCrypto DecryptFailReason = "crypto"
+)
 
 type NewsletterMessageMeta struct {
 	// When a newsletter message is edited, the message isn't wrapped in an EditedMessage like normal messages.

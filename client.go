@@ -86,6 +86,19 @@ type Client struct {
 	EnableDecryptedEventBuffer bool
 	lastDecryptedBufferClear   time.Time
 
+	// WZAPI-PATCH(13): DecryptStoreUnavailable clasifica un error de descifrado.
+	// Devolver true significa "esto no es criptografía, es el ALMACÉN que no
+	// contesta". Ante ese veredicto decryptMessages no manda retry receipt, no le
+	// pide el mensaje al teléfono y —lo que de verdad importa— NO confirma el
+	// nodo: el mensaje se queda en el servidor y se reentrega cuando el almacén
+	// vuelva. Gastar ahí el presupuesto de cinco retry receipts es tirar el
+	// mensaje, porque el presupuesto se agota en segundos y un failover de base
+	// dura minutos.
+	//
+	// Quien decide es el llamador, que es el único que sabe si SU base está
+	// caída. Nil = la conducta de upstream, intacta.
+	DecryptStoreUnavailable func(error) bool
+
 	DisableLoginAutoReconnect bool
 
 	sendActiveReceipts atomic.Uint32

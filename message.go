@@ -422,10 +422,42 @@ func (cli *Client) decryptMessages(ctx context.Context, info *types.MessageInfo,
 			continue
 		} else if errors.Is(err, signalerror.ErrOldCounter) {
 			cli.Log.Warnf("Ignoring message %s from %s: %v", info.ID, info.SourceString(), err)
+			// WZAPI-PATCH(13): este descarte era MUDO. El mensaje se ignora y el
+			// nodo se acaba confirmando, así que no queda de él ni una fila ni un
+			// evento: para el consumidor nunca existió. Reenviarlo no arreglaría
+			// nada —el contador seguiría siendo viejo—, pero el descarte tiene que
+			// poder contarse y alertarse, que es lo que este evento permite.
+			cli.dispatchEvent(&events.UndecryptableMessage{
+				Info:            *info,
+				FailReason:      events.DecryptFailOldCounter,
+				DecryptFailMode: events.DecryptFailMode(ag.OptionalString("decrypt-fail")),
+			})
 			continue
 		} else if err != nil {
 			cli.Log.Warnf("Error decrypting message %s from %s: %v", info.ID, info.SourceString(), err)
 			if ctx.Err() != nil || errors.Is(err, context.Canceled) {
+				return
+			}
+			// WZAPI-PATCH(13): un almacén que no contesta NO es un fallo
+			// criptográfico, y tratarlo como tal pierde el mensaje. El camino de
+			// abajo manda hasta cinco retry receipts —presupuesto que se agota en
+			// unos diez segundos— y después confirma el nodo; un failover de la
+			// base dura minutos, así que cuando el almacén vuelve el mensaje ya
+			// está confirmado y el servidor no lo reentrega nunca.
+			//
+			// Ante el veredicto del llamador se sale SIN confirmar y sin gastar
+			// nada: es el mismo trato que ya recibe un handler que falla (el
+			// `handlerFailed` de más abajo), y por la misma razón — lo que no se
+			// pudo procesar no se confirma. El ratchet no se movió: el fallo
+			// ocurre en bufferedDecrypt, antes de tocar la sesión de Signal.
+			if cli.DecryptStoreUnavailable != nil && cli.DecryptStoreUnavailable(err) {
+				cli.Log.Warnf("Not acking message %s from %s: the store is unavailable, so this is not a decryption failure — leaving the message for the server to redeliver", info.ID, info.SourceString())
+				cli.dispatchEvent(&events.UndecryptableMessage{
+					Info:             *info,
+					FailReason:       events.DecryptFailStoreUnavailable,
+					StoreUnavailable: true,
+					DecryptFailMode:  events.DecryptFailMode(ag.OptionalString("decrypt-fail")),
+				})
 				return
 			}
 			isUnavailable := encType == "skmsg" && !containsDirectMsg && errors.Is(err, signalerror.ErrNoSenderKeyForUser)
@@ -444,6 +476,7 @@ func (cli *Client) decryptMessages(ctx context.Context, info *types.MessageInfo,
 			cli.dispatchEvent(&events.UndecryptableMessage{
 				Info:            *info,
 				IsUnavailable:   isUnavailable,
+				FailReason:      events.DecryptFailCrypto,
 				DecryptFailMode: events.DecryptFailMode(ag.OptionalString("decrypt-fail")),
 			})
 			return
